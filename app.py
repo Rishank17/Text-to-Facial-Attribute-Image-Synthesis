@@ -32,6 +32,7 @@ def compute_clip_score(image: Image.Image, text: str) -> float:
         # Normalise to 0-1 range (raw logit is typically 0-100)
         return round(min(max(score / 100.0, 0.0), 1.0), 3)
     except Exception as e:
+        print(f"CLIP score error: {e}")
         return None
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -39,7 +40,12 @@ def compute_clip_score(image: Image.Image, text: str) -> float:
 st.set_page_config(
     page_title="AttriDiffuser - Face Generation",
     page_icon="🎭",
-    layout="wide"
+    layout="wide",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
 )
 
 # Title and description
@@ -56,8 +62,14 @@ if 'model' not in st.session_state:
     st.session_state.model = None
 if 'generated_images' not in st.session_state:
     st.session_state.generated_images = []
+if 'generated_image_paths' not in st.session_state:
+    st.session_state.generated_image_paths = []
 if 'clip_scores' not in st.session_state:
     st.session_state.clip_scores = []
+if 'last_prompt' not in st.session_state:
+    st.session_state.last_prompt = ""
+if 'needs_clip' not in st.session_state:
+    st.session_state.needs_clip = False
 
 # Sidebar for settings
 st.sidebar.header("⚙️ Settings")
@@ -108,6 +120,22 @@ if load_model:
             st.sidebar.success("✅ Model loaded!")
         except Exception as e:
             st.sidebar.error(f"❌ Error loading model: {e}")
+
+# ── Run CLIP computation BEFORE columns (top-level, persists across reruns) ───
+if st.session_state.needs_clip:
+    # Load images from saved paths if PIL objects lost across rerun
+    images_for_clip = st.session_state.generated_images
+    if not images_for_clip and st.session_state.generated_image_paths:
+        images_for_clip = [Image.open(p) for p in st.session_state.generated_image_paths if os.path.exists(p)]
+    if images_for_clip and st.session_state.last_prompt:
+        scores = []
+        for img in images_for_clip:
+            score = compute_clip_score(img, st.session_state.last_prompt)
+            if score is not None:
+                scores.append(score)
+        st.session_state.clip_scores = scores
+    st.session_state.needs_clip = False
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Main interface
 col1, col2 = st.columns([1, 1])
@@ -188,6 +216,9 @@ with col2:
             # Parse attributes
             attributes = parse_attributes(text_description)
             st.info(f"Detected attributes: {attributes}")
+            st.session_state.last_prompt = text_description
+            st.session_state.clip_scores = []
+            st.session_state.needs_clip = False
             
             # Custom CSS for stylish progress bar
             st.markdown("""
@@ -400,59 +431,80 @@ with col2:
                 """, unsafe_allow_html=True)
             
             elapsed_time = time.time() - start_time
-            time.sleep(1.5)  # Brief pause to show final time
+            time.sleep(1.5)
             progress_placeholder.empty()
             status_placeholder.empty()
             timer_placeholder.empty()
             st.success(f"✅ Generated {len(st.session_state.generated_images)} face(s) in {elapsed_time:.2f} seconds!")
-
-            # ── CLIP Score Evaluation ──────────────────────────────────────
-            if st.session_state.generated_images:
-                st.subheader("📊 CLIP Score Evaluation")
-                st.caption("Measures how well the generated image matches your text description (higher = better)")
-                with st.spinner("Computing CLIP scores..."):
-                    scores = []
-                    for idx, img in enumerate(st.session_state.generated_images):
-                        score = compute_clip_score(img, text_description)
-                        if score is not None:
-                            scores.append(score)
-                            label = "Excellent 🟢" if score >= 0.28 else ("Good 🟡" if score >= 0.22 else "Low 🔴")
-                            col_a, col_b, col_c = st.columns([2, 3, 2])
-                            with col_a:
-                                st.metric(f"Image {idx+1}", f"{score:.3f}", label)
-                            with col_b:
-                                st.progress(min(score / 0.35, 1.0))
-                            with col_c:
-                                st.write(label)
-                    if scores:
-                        avg = round(sum(scores) / len(scores), 3)
-                        st.info(f"**Average CLIP Score: {avg}** — {'Great text-image alignment ✅' if avg >= 0.25 else 'Moderate alignment — try a more detailed prompt'}")
-            # ──────────────────────────────────────────────────────────────
+            
+            # Save images to disk so they survive st.rerun()
+            os.makedirs("generated_faces", exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            paths = []
+            for idx, img in enumerate(st.session_state.generated_images):
+                path = f"generated_faces/face_{timestamp}_{idx+1}.png"
+                img.save(path)
+                paths.append(path)
+            st.session_state.generated_image_paths = paths
+            st.session_state.needs_clip = True
+            st.rerun()
     
     # Display generated images
-    if st.session_state.generated_images:
-        if len(st.session_state.generated_images) == 1:
-            st.image(st.session_state.generated_images[0], caption="Generated Face", width='stretch')
+    display_images = st.session_state.generated_images
+    if not display_images and st.session_state.generated_image_paths:
+        display_images = [Image.open(p) for p in st.session_state.generated_image_paths if os.path.exists(p)]
+
+    if display_images:
+        if len(display_images) == 1:
+            st.image(display_images[0], caption="Generated Face", width='stretch')
         else:
             cols = st.columns(2)
-            for idx, img in enumerate(st.session_state.generated_images):
+            for idx, img in enumerate(display_images):
                 with cols[idx % 2]:
                     st.image(img, caption=f"Variation {idx+1}", width='stretch')
-        
+
         # Download button
         if st.button("💾 Save Images"):
             os.makedirs("generated_faces", exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             saved_files = []
-            
-            for idx, img in enumerate(st.session_state.generated_images):
+            for idx, img in enumerate(display_images):
                 filename = f"generated_faces/face_{timestamp}_{idx+1}.png"
                 img.save(filename)
                 saved_files.append(filename)
-            
-            st.success(f"✅ Saved {len(st.session_state.generated_images)} image(s)!")
+            st.success(f"✅ Saved {len(display_images)} image(s)!")
             for filename in saved_files:
                 st.text(f"📁 {filename}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 3 — CLIP Score Evaluation (always rendered)
+# ═══════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.header("📊 CLIP Score Evaluation")
+st.caption("Measures how well the generated image matches your text prompt. Computed automatically after each generation.")
+
+if not st.session_state.clip_scores:
+    st.info("Generate an image above to see the CLIP score evaluation here.")
+else:
+    for idx, score in enumerate(st.session_state.clip_scores):
+        label = "Excellent 🟢" if score >= 0.28 else ("Good 🟡" if score >= 0.22 else "Low 🔴")
+        c1, c2, c3 = st.columns([1, 5, 1])
+        with c1:
+            st.metric(f"Image {idx + 1}", f"{score:.3f}")
+        with c2:
+            st.progress(min(score / 0.35, 1.0))
+        with c3:
+            st.markdown(f"**{label}**")
+    avg = round(sum(st.session_state.clip_scores) / len(st.session_state.clip_scores), 3)
+    if avg >= 0.28:
+        st.success(f"Average CLIP Score: **{avg}** — Great text-image alignment ✅")
+    elif avg >= 0.22:
+        st.warning(f"Average CLIP Score: **{avg}** — Moderate alignment. Try a more detailed prompt.")
+    else:
+        st.error(f"Average CLIP Score: **{avg}** — Low alignment. Be more specific in your description.")
+
+    if st.session_state.last_prompt:
+        st.caption(f"Evaluated against prompt: *\"{st.session_state.last_prompt}\"*")
 
 # Footer
 st.markdown("---")
