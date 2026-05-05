@@ -17,7 +17,7 @@ venv311/
 ~/.cache/huggingface/
 
 # Generated images (optional - remove if you want to track them)
-generated_faces/
+#generated_faces/
 
 # Pretrained model weights (large binary files)
 dataset/pretrained-models/**/*.pth
