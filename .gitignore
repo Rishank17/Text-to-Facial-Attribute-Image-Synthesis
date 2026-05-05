@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Hugging Face model cache (large files, re-downloadable)
+~/.cache/huggingface/
+
+# Generated images (optional - remove if you want to track them)
+generated_faces/
+
+# Pretrained model weights (large binary files)
+dataset/pretrained-models/**/*.pth
+dataset/pretrained-models/**/*.pt
+dataset/pretrained-models/**/*.bin
+dataset/pretrained-models/**/*.safetensors
+
+# Dataset zip files
+*.zip
+
+# Environment variables / secrets
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
